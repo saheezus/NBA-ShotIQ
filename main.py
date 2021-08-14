@@ -13,7 +13,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 
 player_dict = players.get_players()
-player_requested = input("Enter a name")
+player_requested = input("NBA Player: ")
 player_selected = [p for p in player_dict if p["full_name"].lower() == player_requested.lower()][0]
 player_selected_id = player_selected["id"]
 
