@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-from matplotlib.patches import Rectangle, Circle, Wedge
+from matplotlib.patches import Rectangle
 import pandas as pd
 from matplotlib.ticker import LinearLocator
 import ssl
