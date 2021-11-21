@@ -157,7 +157,7 @@ ax.plot(x_left_corner, y_left_corner, z_left_corner, color = "black", linewidth 
 ax.plot(x_hoop, y_hoop, z_hoop, color = "black", linewidth = 2, zorder = 10)
 ax.plot(x_right_corner, y_right_corner, z_right_corner, color = "black", linewidth = 2, zorder = 10)
 ax.plot(x_backboard, y_backboard, z_backboard, color = "black", linewidth = 2, zorder = 10)
-box = Rectangle((19, 0), 12, 19, linewidth = 2, color = 'black', fill = False)
+box = Rectangle((19, 0), 12, 19, linewidth = 2, color = 'black', fill = False, zorder = 10)
 ax.plot(x_baseline, y_baseline, z_baseline, linewidth = 2, color = "black", zorder = 10)
 ax.add_patch(box)
 art3d.pathpatch_2d_to_3d(box, z=0, zdir = 'z')
