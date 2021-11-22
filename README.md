@@ -7,7 +7,9 @@ Data accessed from nba_api by @swar. Website: https://github.com/swar/nba_api
 
 🏀 ⛹️‍♂️
 
-**To test this project on your own computer:**
+## **To try out for yourself:**
+
+#### Requirements: Have Python3.7+ installed (download link for latest version: https://www.python.org/downloads/)
 
 1. Download this zip file, open File Explorer/Finder, right click and select __Extract All...__
 2. Click __Extract__
@@ -25,7 +27,7 @@ cd nba_shot_visualizer-main (again)
 ```
 Then, to run it, type either ```python main.py``` OR ```python3 main.py```
 
-If you get this message, then you did everything correct:
+### If you get this message, then you did everything correct:
 ```
 NBA Player Name: 
 ```
