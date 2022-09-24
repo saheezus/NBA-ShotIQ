@@ -1,178 +1,296 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
 import pandas as pd
-from matplotlib.ticker import LinearLocator
-import ssl
 from nba_api.stats.endpoints import shotchartdetail
 from nba_api.stats.static import players, teams
 import json
 import scipy.ndimage
-import mpl_toolkits.mplot3d.art3d as art3d
-ssl._create_default_https_context = ssl._create_unverified_context
+import plotly.graph_objects as go
+import plotly.io as pio
+from flask import Flask, request, render_template, redirect
+
+# connect app to flask framework
+app = Flask(__name__)
+
+# get players from player database
+player_dict = players.get_players()
+player_selected = []
+team_dict = teams.get_teams()
+
+# route to index (the only html file), takes GET and POST
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    error = ""
+    if (request.method == "POST"):
+        # get player from index.html form
+        player = request.form.get("player")
+        try:
+            # get player from database based on input
+            player_selected = [p for p in player_dict if p["full_name"].lower() == player.lower()][0]
+
+            # POST data to send to nba api
+            response = shotchartdetail.ShotChartDetail(
+                team_id=0,
+                player_id=int(player_selected["id"]),
+                season_type_all_star='Regular Season',
+                context_measure_simple='FGA',
+                last_n_games=0,
+                league_id='00',
+                month=0,
+                opponent_team_id=0,
+                period=0
+            )
+
+            # get response and convert to pandas dataframe
+            res = response.get_json()
+            raw_data = json.loads(res)
+
+            results = raw_data['resultSets'][0]
+
+            headers = results['headers']
+            rows = results['rowSet']
+
+            df = pd.DataFrame(rows)
+            df.columns = headers
+
+            # create a grid of shots based on where on the court they're taken
+            grid = generate_shot_grid(data=df)
+
+            # turn grid into x and y coordinates to plot, as well as the field goal percentages
+            x, y, fgp = plot(grid=grid, data=df)
+
+            # generate a plotly figure with the above data
+            fig = draw(fg_pct = fgp, x_data=x, y_data=y, player=player)
+
+            # turn graph into html to render with flask
+            graph = pio.to_html(fig, full_html=False, default_height=700, default_width='90%')
+
+            # set error to None
+            error = ""
+
+            # re-render index.html
+            return render_template("index.html", graph=graph)
+
+        except IndexError:
+            # raise error if player's spelled wrong
+            error = "Player not found. Please check spelling and type player's full name."
+        
+        except ValueError:
+            # raise error if player's found but no data available
+            error = "No shooting data on record. Please try another player."
+
+    # render index with the error displayed
+    return render_template("index.html", error=error)
 
 #get player object from input
-player_dict = players.get_players()
-team_dict = teams.get_teams()
-player_requested = input('NBA Player Name: ')
-player_selected = [p for p in player_dict if p["full_name"].lower() == player_requested.lower()][0]
-player_selected_id = player_selected["id"]
+def get_data(id):
+    # define parameters for request
+    response = shotchartdetail.ShotChartDetail(
+        team_id=0,
+        player_id=int(id),
+        season_type_all_star='Regular Season',
+        context_measure_simple='FGA',
+        last_n_games=0,
+        league_id='00',
+        month=0,
+        opponent_team_id=0,
+        period=0
+    )
 
-# define parameters for request
-response = shotchartdetail.ShotChartDetail(
-	team_id=0,
-	player_id=int(player_selected_id),
-	season_type_all_star='Regular Season',
-    context_measure_simple='FGA',
-    last_n_games=0,
-    league_id='00',
-    month=0,
-    opponent_team_id=0,
-    period=0
-)
+    # get response and convert to pandas dataframe
+    raw_data = json.loads(response.get_json())
 
-# get response and convert to pandas dataframe
-raw_data = json.loads(response.get_json())
-results = raw_data['resultSets'][0]
-headers = results['headers']
-rows = results['rowSet']
-df = pd.DataFrame(rows)
-df.columns = headers
+    results = raw_data['resultSets'][0]
 
-# only need to get location of shots, attempts, and makes
-df = df.filter(items= ['LOC_X', 'LOC_Y', 'SHOT_MADE_FLAG', 'SHOT_ATTEMPTED_FLAG', 'SHOT_ZONE_RANGE'])
+    headers = results['headers']
+    rows = results['rowSet']
 
-#normalize data from 0 to 500
-df['LOC_X'] = df['LOC_X'] + (-1*min(df['LOC_X']))
-df['LOC_Y'] = df['LOC_Y'] + (-1*min(df['LOC_Y']))
+    df = pd.DataFrame(rows)
+    df.columns = headers
 
-bins = np.arange(10, 501, 10)
+def generate_shot_grid(data):
+    # only need to get location of shots, attempts, and makes
+    data = data.filter(items=['LOC_X', 'LOC_Y', 'SHOT_MADE_FLAG', 'SHOT_ATTEMPTED_FLAG', 'SHOT_ZONE_RANGE'])
 
-dict_x = {}
-for val in bins:
-    dict_x[val] = []
+    #normalize data from 0 to 500
+    data['LOC_X'] = data['LOC_X'] + (-1*min(data['LOC_X']))
+    data['LOC_Y'] = data['LOC_Y'] + (-1*min(data['LOC_Y']))
 
-for i in range(0, len(df)):
-    for j in range(0, len(bins)):
-        if df['LOC_X'][i] < bins[j]:
-            dict_x[bins[j]].append(i)
-            break
+    # bins is number of regions court should be split into
+    bins = np.arange(10, 501, 10)
 
-x_regions = np.arange(0, 50)
-y_regions = np.arange(0, 50)
-reg_dict = {}
-for i in range(1, len(x_regions)*len(y_regions)+1):
-    reg_dict[i] = []
+    # dictionary for storing x coordinates of the regions
+    dict_x = {}
+    for val in bins:
+        dict_x[val] = []
 
-temp_regions = np.arange(1, 51)
+    # organize all shot data of player into bins
+    for i in range(0, len(data)):
+        for j in range(0, len(bins)):
+            if data['LOC_X'][i] < bins[j]:
+                dict_x[bins[j]].append(i)
+                break
 
-reg_idx = 0
-divisor = 100
-for key in dict_x:
-    for idx in dict_x[key]:
-        reg_idx = int(df['LOC_X'][idx]*df['LOC_Y'][idx]/divisor)
-        if reg_idx < len(temp_regions):
-            reg_dict[temp_regions[reg_idx]].append(idx)
-    temp_regions += 50
-    divisor += 100
+    # create x and y regions (50)
+    x_regions = np.arange(0, 50)
+    y_regions = np.arange(0, 50)
 
-def calc_fg_pct(arr):
+    #create a dictionary of all regions
+    reg_dict = {}
+    for i in range(1, len(x_regions)*len(y_regions)+1):
+        reg_dict[i] = []
+
+    temp_regions = np.arange(1, 51)
+
+    # orgnaize all the shots into x and y coordinates and transfer into reg_dict
+    reg_idx = 0
+    divisor = 100
+    for key in dict_x:
+        for idx in dict_x[key]:
+            reg_idx = int(data['LOC_X'][idx]*data['LOC_Y'][idx]/divisor)
+            if reg_idx < len(temp_regions):
+                reg_dict[temp_regions[reg_idx]].append(idx)
+        temp_regions += 50
+        divisor += 100
+
+    return reg_dict
+
+# calculate field goal precentage by taking made shots divided by total shots attempted
+def calc_fg_pct(arr, data):
     made = 0
     total = 0
     if len(arr) == 0:
         return 0
     for index in arr:
-        made += df['SHOT_MADE_FLAG'][index]
+        made += data['SHOT_MADE_FLAG'][index]
         total += 1
-    return float(made/total)
+    return float(100 * made/total)
 
-fg_pct = np.array([])
-for key in reg_dict:
-    fg_pct = np.append(fg_pct, calc_fg_pct(reg_dict[key]))
+# transfer data into plottable x, y, and z coordinates
+def plot(grid, data):
+    fg_pct = np.array([])
+    for key in grid:
+        fg_pct = np.append(fg_pct, calc_fg_pct(grid[key], data))
 
-fg_pct = np.transpose(np.reshape(fg_pct, (50, 50)))
+    fg_pct = np.transpose(np.reshape(fg_pct, (50, 50)))
 
-x_data, y_data = np.meshgrid(x_regions, y_regions)
+    x_data, y_data = np.meshgrid(np.arange(0, 50), np.arange(0, 50))
 
-fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+    return x_data, y_data, fg_pct
 
-def draw_court(ax = None, color = 'white', lw = 2, outer_lines = False):
-    if ax is None:
-        ax = plt.gca()
-    hoop = Circle((4.75, 25), radius = 0.75, linewidth = lw, color=color, fill=False)
-    backboard = Rectangle((4, 22), -0.1, 6, linewidth = lw, color = color)
-    inner_box = Rectangle((0, 19), 19, 12, linewidth = lw, color = color, fill = False)
-    top_free_throw = Wedge((19, 25), 6, theta1 = 270, theta2 = 90, linewidth = lw, color = color, fill = False)
-    bottom_free_throw = Wedge((19, 25), 6, theta1 = 90, theta2 = 270, linewidth = lw, color = color, linestyle = "dashed", fill = False)
-    corner_three_right = Rectangle((0, 3), 14, 0.1, linewidth = lw, color = color)
-    corner_three_left = Rectangle((0, 47), 14, 0.1, linewidth = lw, color = color)
-    #three_arc = Wedge((4.75, 25), 23.75, 270, 90, linewidth = lw, color = color, fill = False)
+def draw(fg_pct, x_data, y_data, player):
+    r_arc = 23.75
 
-    court_elements = [hoop, backboard, inner_box, top_free_throw, bottom_free_throw, corner_three_right, corner_three_left]
+    # Theta varies only between 22 degrees and 158 degrees for the 3-point line
+    theta_arc = np.linspace(22*np.pi/180., 158*np.pi/180., 1000)
 
-    if outer_lines:
-        outer_lines = Rectangle((0, 0), 50, 50, linewidth = lw, color = color, fill = False)
-        court_elements.append(outer_lines)
+    # coorindates for the 3-point ard
+    y_arc = r_arc*np.sin(theta_arc) + 4.75
+    x_arc = r_arc*np.cos(theta_arc) + 25 
+    z_arc = np.full_like(theta_arc, 0) 
 
-    for element in court_elements:
-        ax.add_patch(element)
-        art3d.pathpatch_2d_to_3d(element, z=40, zdir = 'z')
+    # coords for left corner 3-point line
+    y_left_corner = np.linspace(0, 14, 1000)
+    x_left_corner = np.linspace(3, 3, 1000)
+    z_left_corner = np.full_like(x_left_corner, 0)
 
-    return ax
+    # coords for right corner 3
+    y_right_corner = np.linspace(0, 14, 1000)
+    x_right_corner = np.linspace(47, 47, 1000)
+    z_right_corner = np.full_like(x_right_corner, 0)
 
-# draw_court(outer_lines=True, color='black')
-r_arc = 23.75
-r_hoop = 0.75
+    # coordinates for basket
+    theta_hoop = np.linspace(0, 2*np.pi, 1000)
+    y_hoop = np.sin(theta_hoop) + 4.75
+    x_hoop = np.cos(theta_hoop) + 25
+    z_hoop = np.full_like(theta_hoop, 0)
 
-# Theta varies only between pi/2 and 3pi/2. to have a half-circle
-theta_arc = np.linspace(22*np.pi/180., 158*np.pi/180., 1000)
+    # coordinates for backboard
+    y_backboard = np.linspace(3.75, 3.75, 1000)
+    x_backboard = np.linspace(22, 28, 1000)
+    z_backboard = np.full_like(x_backboard, 0)
 
-y_arc = r_arc*np.sin(theta_arc) + 4.75 # x=0
-x_arc = r_arc*np.cos(theta_arc) + 25 # y - y0 = r*cos(theta)
-z_arc = np.full_like(theta_arc, 0) # z - z0 = r*sin(theta)
+    # coordinates for baseline
+    x_baseline = np.linspace(0, 50, 1000)
+    y_baseline = np.linspace(0, 0, 1000)
+    z_baseline = np.full_like(y_baseline, 0)
 
-y_left_corner = np.linspace(0, 14, 1000)
-x_left_corner = np.linspace(3, 3, 1000)
-z_left_corner = np.full_like(x_left_corner, 0)
+    # coordinates for sidelines
+    y_sideline = np.linspace(0, 50, 1000)
+    x_right_sideline = np.full_like(y_sideline, 0)
+    z_sideline = np.full_like(y_sideline, 0)
+    x_left_sideline = np.full_like(y_sideline, 50)
 
-y_right_corner = np.linspace(0, 14, 1000)
-x_right_corner = np.linspace(47, 47, 1000)
-z_right_corner = np.full_like(x_right_corner, 0)
+    # apply a filter to make graph more smooth (makes data not 100% accurate however)
+    pct_normalized = scipy.ndimage.filters.gaussian_filter(fg_pct, [1, 1])
 
-theta_hoop = np.linspace(0, 2*np.pi, 1000)
-y_hoop = np.sin(theta_hoop) + 4.75
-x_hoop = np.cos(theta_hoop) + 25
-z_hoop = np.full_like(theta_hoop, 0)
+    # dictionary for lighting
+    light = {
+        "ambient": 1,
+        "roughness": 1,
+        "diffuse": 1,
+        "specular": 0.2,
+        "fresnel": 0
+    }
 
-y_backboard = np.linspace(3.75, 3.75, 1000)
-x_backboard = np.linspace(22, 28, 1000)
-z_backboard = np.full_like(x_backboard, 0)
+    # create the figure with JSON parameters
+    figure = go.Figure(
+        data=[
+            go.Surface(
+                z=pct_normalized,
+                x=x_data,
+                y=y_data,
+                name="Shooting %",
+                hoverinfo="z+name",
+                opacity=0.92,
+                colorscale="YlOrRd",
+                lighting=light
+            )
+        ],
+        layout = {
+            "title": {
+                "text": player.title() + " Shooting Chart"
+            },
+            "scene": {
+                "xaxis": {
+                    "showline": False,
+                    "showgrid": False,
+                    "showticklabels": False,
+                    "title": {
+                        "text": "<br>"
+                    }
+                },
+                "yaxis": {
+                    "showline": False,
+                    "showgrid": False,
+                    "showticklabels": False,
+                    "title": {
+                        "text": "<br>"
+                    }
+                },
+                "zaxis": {
+                    "title": {
+                        "text": "Shooting %"
+                    }
+                }
+            }
+        }
+    )
 
-x_baseline = np.linspace(3, 47, 1000)
-y_baseline = np.linspace(0, 0, 1000)
-z_baseline = np.full_like(y_baseline, 0)
+    # more specifications for graph
+    line_marker = dict(
+        color="black",
+        width=5
+    )
 
-ax.plot(x_arc, y_arc, z_arc, color = 'black', linewidth = 2, zorder = 10)
-ax.plot(x_left_corner, y_left_corner, z_left_corner, color = "black", linewidth = 2, zorder = 10)
-ax.plot(x_hoop, y_hoop, z_hoop, color = "black", linewidth = 2, zorder = 10)
-ax.plot(x_right_corner, y_right_corner, z_right_corner, color = "black", linewidth = 2, zorder = 10)
-ax.plot(x_backboard, y_backboard, z_backboard, color = "black", linewidth = 2, zorder = 10)
-box = Rectangle((19, 0), 12, 19, linewidth = 2, color = 'black', fill = False, zorder = 10)
-ax.plot(x_baseline, y_baseline, z_baseline, linewidth = 2, color = "black", zorder = 10)
-ax.add_patch(box)
-art3d.pathpatch_2d_to_3d(box, z=0, zdir = 'z')
+    # add all the court elements, such as hoop, backboard, baseline, etc.
+    figure.add_scatter3d(x=x_arc, y=y_arc, z=z_arc, mode="lines", line=line_marker, showlegend=False)
+    figure.add_scatter3d(x=x_left_corner, y=y_left_corner, z=z_left_corner, mode="lines", line=line_marker, showlegend=False)
+    figure.add_scatter3d(x=x_right_corner, y=y_right_corner, z=z_right_corner, mode="lines", line=line_marker, showlegend=False)
+    figure.add_scatter3d(x=x_hoop, y=y_hoop, z=z_hoop, mode="lines", line=line_marker, showlegend=False)
+    figure.add_scatter3d(x=x_backboard, y=y_backboard, z=z_backboard, mode="lines", line=line_marker, showlegend=False)
+    figure.add_scatter3d(x=x_baseline, y=y_baseline, z=z_baseline, mode="lines", line=line_marker, showlegend=False)
+    figure.add_scatter3d(x=x_right_sideline, y=y_sideline, z=z_sideline, mode="lines", line=line_marker, showlegend=False)
+    figure.add_scatter3d(x=x_left_sideline, y=y_sideline, z=z_sideline, mode="lines", line=line_marker, showlegend=False)
 
-sigma = [1.5, 1.5]
-
-smooth = scipy.ndimage.filters.gaussian_filter(fg_pct, sigma)
-
-surf = ax.plot_surface(x_data, y_data, smooth, cmap='jet', linewidth=0, antialiased=True)
-
-ax.set_title(player_requested.title() + " Shot Chart")
-ax.zaxis.set_major_locator(LinearLocator(10))
-ax.zaxis.set_major_formatter('{x:.02f}')
-ax.view_init(90, 0)
-
-fig.colorbar(surf, shrink=0.5, aspect=5)
-
-plt.show()
+    return figure

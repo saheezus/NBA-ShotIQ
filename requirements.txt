@@ -1,0 +1,7 @@
+Pandas
+Numpy
+Scipy
+Plotly
+nba_api
+Json
+Flask

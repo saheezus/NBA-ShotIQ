@@ -1,7 +1,0 @@
-The following python libraries were used for this project:
-- matplotlib (plotting)
-- nba_api (nba player and shot chart data)
-- pandas (dataframes)
-- numpy (matrix manipulation)
-- scipy (cleaning and smoothing data for clean graph)
-- mpl_toolkits (3d graph functionality)
