@@ -11,13 +11,6 @@ import plotly
 from flask import Flask, request, render_template, redirect
 import flask
 # connect app to flask framework
-print(pd.__version__)
-print(np.__version__)
-print(scipy.__version__)
-print(plotly.__version__)
-# print(nba_api.__version__)
-print(json.__version__)
-print(flask.__version__)
 
 app = Flask(__name__)
 
