@@ -17,6 +17,11 @@ Installations:
 - pip install plotly
 - pip install flask
 
+Running:
+
+In root directory run command:
+- flask run
+
 My project is called NBA ShotIQ, and can be used as a visualization tool for NBA players' shooting accuracy. It takes data collected from the NBA api available on GitHub (https://github.com/swar/nba_api) and generates a 3D surface map, depicting how players' shooting performances differ by each region of the court, such as layups, 3-point shots, and mid-range. Moreover, the graph is entirely interactive, so the user can drag, zoom, hover and click to interact with the graph and see all of its beauty entirely.
 
 Of course, the software behind the graph's visualization and interactiveness are not built by me. The work I've done is use Python and data science libraries such as Pandas, Scipy, and Numpy to carefully extract menaingful shooting data from the dataset. This was done by
